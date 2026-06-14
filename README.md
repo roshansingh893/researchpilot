@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 1** — repository scaffolding only. No business logic, RAG pipelines, agents, or database models are implemented yet.
+This repository is currently in **Phase 2** — FastAPI and Gradio run as separate processes and communicate over HTTP. RAG pipelines, agents, and database models are not implemented yet.
 
 ## Proposed Architecture
 
@@ -94,20 +94,44 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-Copy the environment template and fill in your API keys:
+### Environment Variables
+
+Copy the environment template and fill in your values:
 
 ```bash
 copy .env.example .env   # Windows
 # cp .env.example .env   # macOS / Linux
 ```
 
+Set environment variables in your shell before starting the apps (or use a tool that loads `.env` into the process environment).
+
+| Variable | Used by | Default | Description |
+|----------|---------|---------|-------------|
+| `FASTAPI_BASE_URL` | Gradio | `http://127.0.0.1:8000` | Base URL of the running FastAPI server |
+| `OPENAI_API_KEY` | Future phases | — | OpenAI API key placeholder |
+| `GEMINI_API_KEY` | Future phases | — | Google Gemini API key placeholder |
+
+Example for a non-default API host or port:
+
+```bash
+# Windows PowerShell
+$env:FASTAPI_BASE_URL = "http://127.0.0.1:8000"
+
+# macOS / Linux
+export FASTAPI_BASE_URL=http://127.0.0.1:8000
+```
+
 ### Running FastAPI
+
+Start the API **first** — Gradio depends on it for the integration test.
 
 From the project root:
 
 ```bash
 uvicorn app.main:app --reload
 ```
+
+The server listens at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 Verify the health endpoint:
 
@@ -124,17 +148,77 @@ Expected response:
 }
 ```
 
+Verify the hello endpoint:
+
+```bash
+curl "http://127.0.0.1:8000/hello?name=Roshan"
+```
+
+Expected response:
+
+```json
+{
+  "message": "Hello Roshan, welcome to ResearchPilot."
+}
+```
+
 Interactive API docs are available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
 ### Running Gradio
 
-From the project root:
+In a **second terminal**, from the project root:
 
 ```bash
 python gradio_app/app.py
 ```
 
 Open the URL printed in the terminal (default: [http://127.0.0.1:7860](http://127.0.0.1:7860)).
+
+Gradio does not embed FastAPI — it sends HTTP requests to the API process using `FASTAPI_BASE_URL` (see [Environment Variables](#environment-variables)). Ensure FastAPI is running before testing the connection.
+
+### Testing the Integration
+
+Use two terminals so FastAPI and Gradio stay separate processes:
+
+| Terminal | Command |
+|----------|---------|
+| 1 | `uvicorn app.main:app --reload` |
+| 2 | `python gradio_app/app.py` |
+
+**Verification flow:**
+
+```
+Gradio UI
+    ↓
+User enters name (e.g. Roshan)
+    ↓
+Click "Test FastAPI Connection"
+    ↓
+HTTP GET http://127.0.0.1:8000/hello?name=Roshan
+    ↓
+FastAPI returns JSON
+    ↓
+Gradio displays: "Hello Roshan, welcome to ResearchPilot."
+```
+
+**Steps:**
+
+1. Start FastAPI in terminal 1 and confirm `/health` returns `"status": "healthy"`.
+2. Start Gradio in terminal 2 and open the local URL in your browser.
+3. Enter a name in **Enter your name**.
+4. Click **Test FastAPI Connection**.
+5. Confirm the **Response** textbox shows `Hello <name>, welcome to ResearchPilot.`
+
+**Optional API-only check (without Gradio):**
+
+```bash
+curl "http://127.0.0.1:8000/hello?name=Roshan"
+```
+
+**Troubleshooting:**
+
+- If Gradio shows a connection error, ensure FastAPI is running and reachable at `FASTAPI_BASE_URL` (default: `http://127.0.0.1:8000`).
+- If you changed the API host or port, set `FASTAPI_BASE_URL` to match before starting Gradio.
 
 ## Project Structure
 
@@ -144,6 +228,7 @@ researchpilot/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── routers/
+│   │   └── hello.py
 │   ├── agents/
 │   ├── services/
 │   ├── models/
