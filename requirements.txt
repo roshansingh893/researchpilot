@@ -1,0 +1,17 @@
+# Web framework
+fastapi
+uvicorn[standard]
+
+# UI
+gradio
+
+# Data & validation
+sqlalchemy
+pydantic
+
+# AI orchestration
+langchain
+langgraph
+
+# Vector store
+chromadb
