@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 2** — FastAPI and Gradio run as separate processes and communicate over HTTP. RAG pipelines, agents, and database models are not implemented yet.
+This repository is currently in **Phase 3** — document metadata and conversation history persist in SQLite via SQLAlchemy. RAG pipelines, vector search, and agents are not implemented yet.
 
 ## Proposed Architecture
 
@@ -220,6 +220,82 @@ curl "http://127.0.0.1:8000/hello?name=Roshan"
 - If Gradio shows a connection error, ensure FastAPI is running and reachable at `FASTAPI_BASE_URL` (default: `http://127.0.0.1:8000`).
 - If you changed the API host or port, set `FASTAPI_BASE_URL` to match before starting Gradio.
 
+## Persistence (Phase 3)
+
+ResearchPilot uses **SQLAlchemy** with **SQLite** for development persistence. Metadata is stored in a local database file so document records and conversation history survive API restarts.
+
+| Item | Location |
+|------|----------|
+| Database file | `data/researchpilot.db` |
+| Engine config | `app/database/session.py` |
+| ORM models | `app/models/` |
+| API schemas | `app/schemas/` |
+| HTTP routes | `app/routers/documents.py`, `app/routers/conversations.py` |
+
+Tables are created automatically when FastAPI starts (`init_db()` runs on application startup). The SQLite file is git-ignored; only the `data/` directory structure is tracked.
+
+### Inspecting the Database
+
+Using the SQLite CLI from the project root:
+
+```bash
+sqlite3 data/researchpilot.db
+```
+
+Useful commands inside the SQLite prompt:
+
+```sql
+.tables
+.schema documents
+.schema conversations
+SELECT * FROM documents;
+SELECT * FROM conversations;
+.quit
+```
+
+On Windows, install [SQLite tools](https://www.sqlite.org/download.html) or use a GUI such as DB Browser for SQLite.
+
+### Example API Requests
+
+**Create a document record:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/documents \
+  -H "Content-Type: application/json" \
+  -d "{\"filename\": \"paper.pdf\"}"
+```
+
+**List documents:**
+
+```bash
+curl http://127.0.0.1:8000/documents
+```
+
+**Create a conversation record:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/conversations \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"What is RAG?\", \"response\": \"RAG combines retrieval with generation.\"}"
+```
+
+**List conversations:**
+
+```bash
+curl http://127.0.0.1:8000/conversations
+```
+
+### Verify with Swagger UI
+
+1. Start FastAPI: `uvicorn app.main:app --reload`
+2. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+3. Under **Documents**, expand `POST /documents` → **Try it out** → set body to `{"filename": "paper.pdf"}` → **Execute** → confirm `201` and a JSON response with `id`, `filename`, and `uploaded_at`
+4. Expand `GET /documents` → **Execute** → confirm the created document appears in the list
+5. Under **Conversations**, expand `POST /conversations` → **Try it out** → set body to `{"query": "What is RAG?", "response": "RAG combines retrieval with generation."}` → **Execute** → confirm `201`
+6. Expand `GET /conversations` → **Execute** → confirm the conversation appears
+7. Restart the API and repeat `GET /documents` and `GET /conversations` to confirm data persists across restarts
+8. Optionally run `sqlite3 data/researchpilot.db "SELECT * FROM documents;"` to inspect rows directly
+
 ## Project Structure
 
 ```
@@ -228,17 +304,26 @@ researchpilot/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── routers/
-│   │   └── hello.py
+│   │   ├── hello.py
+│   │   ├── documents.py
+│   │   └── conversations.py
 │   ├── agents/
 │   ├── services/
 │   ├── models/
+│   │   ├── document.py
+│   │   └── conversation.py
 │   ├── schemas/
+│   │   ├── document.py
+│   │   └── conversation.py
 │   ├── database/
+│   │   ├── base.py
+│   │   └── session.py
 │   ├── core/
 │   └── utils/
 ├── gradio_app/
 │   └── app.py
 ├── data/
+│   ├── researchpilot.db   # created at runtime (git-ignored)
 │   ├── uploads/
 │   └── chroma_db/
 ├── tests/
