@@ -29,6 +29,7 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Create all tables registered on Base.metadata (development startup)."""
+    import app.models.chunk  # noqa: F401
     import app.models.conversation  # noqa: F401
     import app.models.document  # noqa: F401
 

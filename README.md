@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 3** — document metadata and conversation history persist in SQLite via SQLAlchemy. RAG pipelines, vector search, and agents are not implemented yet.
+This repository is currently in **Phase 4** — PDF uploads are ingested with LangChain loaders and splitters; structured chunks persist in SQLite. Embeddings, vector search, and RAG are not implemented yet.
 
 ## Proposed Architecture
 
@@ -62,7 +62,7 @@ flowchart TB
 | **1** | Repository scaffolding |
 | **2** | FastAPI + Gradio integration |
 | **3** | SQLAlchemy setup and document/conversation metadata persistence |
-| **4** | PDF ingestion pipeline and ChromaDB indexing |
+| **4** | PDF ingestion pipeline and chunk storage |
 | **5** | Baseline RAG implementation without LangGraph |
 | **6** | Conversation memory |
 | **7** | LangGraph multi-agent orchestration |
@@ -108,6 +108,8 @@ Set environment variables in your shell before starting the apps (or use a tool 
 | Variable | Used by | Default | Description |
 |----------|---------|---------|-------------|
 | `FASTAPI_BASE_URL` | Gradio | `http://127.0.0.1:8000` | Base URL of the running FastAPI server |
+| `CHUNK_SIZE` | Ingestion | `1000` | Maximum characters per text chunk |
+| `CHUNK_OVERLAP` | Ingestion | `200` | Overlapping characters between consecutive chunks |
 | `OPENAI_API_KEY` | Future phases | — | OpenAI API key placeholder |
 | `GEMINI_API_KEY` | Future phases | — | Google Gemini API key placeholder |
 
@@ -296,6 +298,121 @@ curl http://127.0.0.1:8000/conversations
 7. Restart the API and repeat `GET /documents` and `GET /conversations` to confirm data persists across restarts
 8. Optionally run `sqlite3 data/researchpilot.db "SELECT * FROM documents;"` to inspect rows directly
 
+## Document Ingestion (Phase 4)
+
+Phase 4 transforms uploaded PDFs into structured, metadata-rich text chunks stored in SQLite. This prepares ResearchPilot for embedding generation and retrieval in Phase 5 without implementing vector search yet.
+
+### Upload Workflow
+
+```
+Upload PDF (POST /documents/upload)
+    ↓
+File saved to data/uploads/{document_id}_{filename}
+    ↓
+PyPDFLoader extracts LangChain Documents (one per page)
+    ↓
+RecursiveCharacterTextSplitter creates smaller chunks
+    ↓
+Chunks persisted in SQLite (chunks table)
+    ↓
+Chunks retrievable via GET /documents/{document_id}/chunks
+```
+
+| Step | Component | Location |
+|------|-----------|----------|
+| HTTP upload | `POST /documents/upload` | `app/routers/documents.py` |
+| File storage | Saved PDFs | `data/uploads/` |
+| Loading | `PyPDFLoader` | `app/services/ingestion.py` |
+| Chunking | `RecursiveCharacterTextSplitter` | `app/services/ingestion.py` |
+| Persistence | `Document` → `Chunk` (one-to-many) | `app/models/` |
+
+### Chunking Strategy
+
+`RecursiveCharacterTextSplitter` breaks page-level text into smaller fragments using a hierarchy of separators (paragraph breaks, line breaks, sentences, words). This keeps chunks semantically coherent rather than splitting at arbitrary character positions.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `CHUNK_SIZE` | `1000` | Target maximum characters per chunk |
+| `CHUNK_OVERLAP` | `200` | Shared characters between adjacent chunks to preserve context at boundaries |
+
+Both values are configurable via environment variables (see [Environment Variables](#environment-variables)).
+
+### Why Metadata Preservation Matters
+
+Each LangChain `Document` carries `page_content` plus a `metadata` dictionary. `PyPDFLoader` populates:
+
+- **`source`** — file path on disk
+- **`page`** — zero-based page index
+
+ResearchPilot adds **`source_filename`** during loading and maps metadata into the `Chunk` model:
+
+| Chunk field | Source |
+|-------------|--------|
+| `chunk_text` | LangChain `page_content` |
+| `page_number` | Loader `page` metadata (stored as 1-based) |
+| `chunk_order` | Sequential index after splitting |
+| `document_id` | Foreign key to parent `Document` |
+
+Preserving page numbers and source filenames enables **citations** in future RAG responses (e.g. "See page 3 of paper.pdf") and ensures embeddings in Phase 5 can be traced back to their origin.
+
+### Why LangChain Documents?
+
+LangChain `Document` objects are the standard interchange format across loaders, splitters, embedders, and retrievers. By ingesting PDFs into Documents and splitting them with LangChain splitters, ResearchPilot stays compatible with the ecosystem used in Phase 5 (embeddings + retrieval) without re-parsing PDFs or inventing a parallel data model.
+
+### Why Embeddings Are Deferred to Phase 5
+
+Phase 4 focuses on **correct ingestion and chunk storage**. Embeddings require model selection, API keys, and vector index management — concerns that belong in the retrieval layer. Storing clean, metadata-rich chunks now means Phase 5 can embed and index them without revisiting the ingestion pipeline.
+
+### Example API Requests
+
+**Upload a PDF:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/documents/upload \
+  -F "file=@paper.pdf"
+```
+
+Expected response:
+
+```json
+{
+  "id": 1,
+  "filename": "paper.pdf",
+  "uploaded_at": "2026-06-14T12:00:00",
+  "chunk_count": 42
+}
+```
+
+**List chunks for a document:**
+
+```bash
+curl http://127.0.0.1:8000/documents/1/chunks
+```
+
+**Inspect chunks in SQLite:**
+
+```sql
+SELECT id, document_id, page_number, chunk_order, substr(chunk_text, 1, 80)
+FROM chunks
+WHERE document_id = 1
+ORDER BY chunk_order;
+```
+
+### Verify with Swagger UI (Phase 4)
+
+1. Start FastAPI: `uvicorn app.main:app --reload`
+2. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+3. Under **Documents**, expand `POST /documents/upload` → **Try it out**
+4. Click **Choose File**, select a PDF, then **Execute**
+5. Confirm `201` response with `id`, `filename`, `uploaded_at`, and `chunk_count`
+6. Expand `GET /documents/{document_id}/chunks` → enter the `id` from step 5 → **Execute**
+7. Confirm a JSON array of chunks with `chunk_text`, `page_number`, and `chunk_order`
+8. Verify the file exists under `data/uploads/` and rows appear in SQLite:
+
+```bash
+sqlite3 data/researchpilot.db "SELECT COUNT(*) FROM chunks WHERE document_id = 1;"
+```
+
 ## Project Structure
 
 ```
@@ -308,17 +425,21 @@ researchpilot/
 │   │   ├── documents.py
 │   │   └── conversations.py
 │   ├── agents/
+│   ├── core/
+│   │   └── config.py
 │   ├── services/
+│   │   └── ingestion.py
 │   ├── models/
 │   │   ├── document.py
+│   │   ├── chunk.py
 │   │   └── conversation.py
 │   ├── schemas/
 │   │   ├── document.py
+│   │   ├── chunk.py
 │   │   └── conversation.py
 │   ├── database/
 │   │   ├── base.py
 │   │   └── session.py
-│   ├── core/
 │   └── utils/
 ├── gradio_app/
 │   └── app.py

@@ -1,6 +1,7 @@
 # Web framework
 fastapi
 uvicorn[standard]
+python-multipart
 
 # UI
 gradio
@@ -11,7 +12,12 @@ pydantic
 
 # AI orchestration
 langchain
+langchain-community
+langchain-text-splitters
 langgraph
+
+# Document ingestion (Phase 4)
+pypdf
 
 # Vector store
 chromadb
