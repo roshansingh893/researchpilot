@@ -438,6 +438,17 @@ SQLite excels at structured relational data (documents, chunks, conversations) b
 
 Each Chroma entry uses the SQLite `chunk.id` as its vector id, maintaining a direct mapping between stores.
 
+### Dynamic Collection Naming (Removing Fixed Size Dependency)
+
+A standard challenge in vector databases is that collections are configured with a fixed vector dimension matching the embedding model's output size (e.g., `1536` for OpenAI `text-embedding-3-small` or `384` for local sentence-transformer models). If the embedding provider or model changes, ChromaDB raises dimensionality mismatch errors when querying or indexing the existing collection.
+
+To eliminate this fixed-size dependency, ResearchPilot dynamically derives the ChromaDB collection name at runtime using the active model's output dimension:
+`{base}_{dim}d` (e.g., `researchpilot_chunks_384d` or `researchpilot_chunks_1536d`).
+
+**Benefits of this approach:**
+- **Zero Configuration Conflicts:** Swapping embedding providers (e.g., switching `EMBEDDING_PROVIDER` in `.env` from `openai` to `huggingface`) automatically routes all vector queries and storage requests to the corresponding collection of the correct dimension.
+- **Safety and Isolation:** Older collections with different vector configurations remain intact on disk under `data/chroma_db/`. You can safely query both alternately, or manually delete unused directories when deprecating older models.
+
 ### End-to-End Workflow
 
 ```
