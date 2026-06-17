@@ -1,23 +1,25 @@
-# Web framework
-fastapi
-uvicorn[standard]
-python-multipart
+fastapi==0.137.0
+uvicorn[standard]==0.49.0
+python-multipart==0.0.32
 
-# UI
-gradio
+gradio==6.18.0
 
-# Data & validation
-sqlalchemy
-pydantic
+sqlalchemy==2.0.50
+pydantic==2.13.4
 
-# AI orchestration
-langchain
-langchain-community
-langchain-text-splitters
-langgraph
+python-dotenv==1.2.2
 
-# Document ingestion (Phase 4)
-pypdf
+langchain==1.3.9
+langchain-core==1.4.7
+langchain-community==0.4.2
+langchain-openai==1.3.2
+langchain-huggingface
+langchain-text-splitters==1.1.2
 
-# Vector store
-chromadb
+pypdf==6.13.2
+
+chromadb==1.5.9
+
+tiktoken==0.13.0
+sentence-transformers
+torch

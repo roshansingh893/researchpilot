@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 4** — PDF uploads are ingested with LangChain loaders and splitters; structured chunks persist in SQLite. Embeddings, vector search, and RAG are not implemented yet.
+This repository is currently in **Phase 5** — document chunks are embedded and indexed in ChromaDB; semantic retrieval is available via `POST /retrieve`. LLM answer generation and RAG prompting are not implemented yet.
 
 ## Proposed Architecture
 
@@ -110,7 +110,11 @@ Set environment variables in your shell before starting the apps (or use a tool 
 | `FASTAPI_BASE_URL` | Gradio | `http://127.0.0.1:8000` | Base URL of the running FastAPI server |
 | `CHUNK_SIZE` | Ingestion | `1000` | Maximum characters per text chunk |
 | `CHUNK_OVERLAP` | Ingestion | `200` | Overlapping characters between consecutive chunks |
-| `OPENAI_API_KEY` | Future phases | — | OpenAI API key placeholder |
+| `EMBEDDING_PROVIDER` | Embeddings | `openai` | Embedding backend (`openai` for production; `test` for pytest) |
+| `OPENAI_EMBEDDING_MODEL` | Embeddings | `text-embedding-3-small` | OpenAI embedding model name |
+| `CHROMA_COLLECTION_NAME` | ChromaDB | `researchpilot_chunks` | Chroma collection for chunk vectors |
+| `RETRIEVAL_TOP_K` | Retrieval | `5` | Default number of chunks returned by `POST /retrieve` |
+| `OPENAI_API_KEY` | Embeddings | — | Required when `EMBEDDING_PROVIDER=openai` |
 | `GEMINI_API_KEY` | Future phases | — | Google Gemini API key placeholder |
 
 Example for a non-default API host or port:
@@ -413,6 +417,111 @@ ORDER BY chunk_order;
 sqlite3 data/researchpilot.db "SELECT COUNT(*) FROM chunks WHERE document_id = 1;"
 ```
 
+## Semantic Retrieval (Phase 5)
+
+Phase 5 adds **embeddings** and **vector similarity search** so ResearchPilot can find the most relevant document chunks for a natural-language query — without generating LLM answers yet.
+
+### What Are Embeddings?
+
+An **embedding** is a dense numerical vector that represents the semantic meaning of text. Similar concepts produce vectors that are close together in vector space, even when the exact words differ. ResearchPilot generates embeddings for each chunk during upload and for each query at retrieval time.
+
+### Why Vector Databases?
+
+SQLite excels at structured relational data (documents, chunks, conversations) but is not optimized for similarity search across high-dimensional vectors. **ChromaDB** stores embeddings and finds nearest neighbors efficiently using approximate nearest-neighbor indexes (HNSW).
+
+### SQLite vs ChromaDB
+
+| Store | Role | Contents |
+|-------|------|----------|
+| **SQLite** (`data/researchpilot.db`) | Source of truth for metadata | Documents, chunk text, page numbers, timestamps |
+| **ChromaDB** (`data/chroma_db/`) | Vector index | Embeddings + retrieval metadata (`chunk_id`, `document_id`, `page_number`, `source_filename`) |
+
+Each Chroma entry uses the SQLite `chunk.id` as its vector id, maintaining a direct mapping between stores.
+
+### End-to-End Workflow
+
+```
+Upload PDF (POST /documents/upload)
+    ↓
+Chunks saved in SQLite (Phase 4)
+    ↓
+Embeddings generated (OpenAI by default)
+    ↓
+Vectors stored in ChromaDB with metadata
+    ↓
+POST /retrieve { "query": "..." }
+    ↓
+Query embedded → similarity search → top-k chunks returned
+```
+
+### How Retrieval Works
+
+1. The query text is embedded using the configured provider.
+2. ChromaDB performs cosine similarity search against indexed chunk vectors.
+3. Top-k matches are joined with SQLite for authoritative `chunk_text` and document metadata.
+4. Results include a `similarity_score` (1.0 = identical direction, lower = less similar).
+
+### Embedding Provider Design
+
+`app/services/embedding_service.py` exposes a factory (`get_embedding_model`) that returns a LangChain `Embeddings` instance based on `EMBEDDING_PROVIDER`:
+
+| Provider | Status | Integration path |
+|----------|--------|------------------|
+| `openai` | Supported | `OpenAIEmbeddings` via `langchain-openai` |
+| `gemini` | Future | `GoogleGenerativeAIEmbeddings` from `langchain-google-genai` |
+| `ollama` | Future | `OllamaEmbeddings` from `langchain-ollama` |
+| `huggingface` | Future | `HuggingFaceEmbeddings` from `langchain-huggingface` |
+
+Swapping providers requires a new factory branch and the corresponding LangChain integration package — ingestion and retrieval code stay unchanged.
+
+### Why LLM Generation Is Deferred to Phase 6
+
+Phase 5 delivers **retrieval only**: finding relevant chunks. Phase 6 will add conversation memory and answer synthesis by passing retrieved context to an LLM. Separating retrieval from generation keeps each phase testable and avoids premature prompt engineering.
+
+### Example API Requests
+
+**Retrieve relevant chunks:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/retrieve \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"What is positional encoding?\"}"
+```
+
+Expected response:
+
+```json
+[
+  {
+    "chunk_id": 17,
+    "document_id": 2,
+    "page_number": 7,
+    "source_filename": "attention.pdf",
+    "similarity_score": 0.92,
+    "chunk_text": "Positional encoding injects order information..."
+  }
+]
+```
+
+### Verify with Swagger UI (Phase 5)
+
+1. Set `OPENAI_API_KEY` in your environment (or use `EMBEDDING_PROVIDER=test` for offline testing).
+2. Start FastAPI: `uvicorn app.main:app --reload`
+3. Upload a PDF via `POST /documents/upload` and note the returned `id`
+4. Optionally confirm chunks via `GET /documents/{document_id}/chunks`
+5. Expand `POST /retrieve` → **Try it out** → set body to `{"query": "What is positional encoding?"}` → **Execute**
+6. Confirm a JSON array of matching chunks with `similarity_score` and metadata
+7. Restart the API and repeat `POST /retrieve` to confirm ChromaDB persistence under `data/chroma_db/`
+
+### Run Automated Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Tests use `EMBEDDING_PROVIDER=test` with isolated temporary SQLite and ChromaDB directories. Coverage includes successful retrieval, multi-document ranking, empty-index retrieval, and Chroma persistence across client restarts.
+
 ## Project Structure
 
 ```
@@ -423,12 +532,16 @@ researchpilot/
 │   ├── routers/
 │   │   ├── hello.py
 │   │   ├── documents.py
-│   │   └── conversations.py
+│   │   ├── conversations.py
+│   │   └── retrieve.py
 │   ├── agents/
 │   ├── core/
 │   │   └── config.py
 │   ├── services/
-│   │   └── ingestion.py
+│   │   ├── ingestion.py
+│   │   ├── embedding_service.py
+│   │   ├── chroma_service.py
+│   │   └── retrieval_service.py
 │   ├── models/
 │   │   ├── document.py
 │   │   ├── chunk.py
@@ -436,7 +549,8 @@ researchpilot/
 │   ├── schemas/
 │   │   ├── document.py
 │   │   ├── chunk.py
-│   │   └── conversation.py
+│   │   ├── conversation.py
+│   │   └── retrieve.py
 │   ├── database/
 │   │   ├── base.py
 │   │   └── session.py
@@ -448,6 +562,9 @@ researchpilot/
 │   ├── uploads/
 │   └── chroma_db/
 ├── tests/
+│   ├── conftest.py
+│   ├── helpers.py
+│   └── test_retrieval.py
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── README.md

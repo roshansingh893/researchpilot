@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import CHUNK_OVERLAP, CHUNK_SIZE, UPLOAD_DIR
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.services.chroma_service import index_chunks
 
 
 def _safe_filename(filename: str) -> str:
@@ -99,10 +100,10 @@ def persist_chunks(
 
 def ingest_pdf(db: Session, file: UploadFile) -> tuple[Document, int]:
     """
-    Full ingestion pipeline: save file → load → split → persist chunks.
+    Full ingestion pipeline: save file → load → split → persist chunks → embed.
 
-    Embeddings are intentionally omitted here; Phase 5 will embed these stored
-    chunks and index them for similarity search.
+    Chunk text lives in SQLite; vectors live in ChromaDB keyed by chunk id.
+    LLM answer generation is intentionally deferred to Phase 6.
     """
     filename = _safe_filename(file.filename or "upload.pdf")
     document = Document(filename=filename)
@@ -112,8 +113,11 @@ def ingest_pdf(db: Session, file: UploadFile) -> tuple[Document, int]:
     file_path = save_upload_file(document.id, file)
     page_documents = load_pdf_documents(file_path, source_filename=filename)
     text_chunks = split_documents(page_documents)
-    persist_chunks(db, document.id, text_chunks)
+    chunk_rows = persist_chunks(db, document.id, text_chunks)
+    db.flush()
+
+    index_chunks(chunk_rows, source_filename=filename)
 
     db.commit()
     db.refresh(document)
-    return document, len(text_chunks)
+    return document, len(chunk_rows)
