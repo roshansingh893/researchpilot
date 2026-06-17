@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 5** — document chunks are embedded and indexed in ChromaDB; semantic retrieval is available via `POST /retrieve`. LLM answer generation and RAG prompting are not implemented yet.
+This repository is currently in **Phase 6** — `POST /chat` performs retrieval-augmented generation: relevant chunks are retrieved, grounded prompts are built, and an LLM produces cited answers. Conversation memory, agents, and streaming are not implemented yet.
 
 ## Proposed Architecture
 
@@ -63,12 +63,12 @@ flowchart TB
 | **2** | FastAPI + Gradio integration |
 | **3** | SQLAlchemy setup and document/conversation metadata persistence |
 | **4** | PDF ingestion pipeline and chunk storage |
-| **5** | Baseline RAG implementation without LangGraph |
-| **6** | Conversation memory |
-| **7** | LangGraph multi-agent orchestration |
-| **8** | Streaming responses, logging, and observability |
-| **9** | Dockerization and deployment preparation |
-| **10** | Testing, CI/CD, and documentation improvements |
+| **5** | Embeddings and semantic retrieval |
+| **6** | RAG answer generation with citations |
+| **7** | Conversation memory |
+| **8** | LangGraph multi-agent orchestration |
+| **9** | Streaming responses, logging, and observability |
+| **10** | Dockerization, CI/CD, and documentation improvements |
 
 ## Getting Started
 
@@ -113,9 +113,12 @@ Set environment variables in your shell before starting the apps (or use a tool 
 | `EMBEDDING_PROVIDER` | Embeddings | `openai` | Embedding backend (`openai` for production; `test` for pytest) |
 | `OPENAI_EMBEDDING_MODEL` | Embeddings | `text-embedding-3-small` | OpenAI embedding model name |
 | `CHROMA_COLLECTION_NAME` | ChromaDB | `researchpilot_chunks` | Chroma collection for chunk vectors |
-| `RETRIEVAL_TOP_K` | Retrieval | `5` | Default number of chunks returned by `POST /retrieve` |
-| `OPENAI_API_KEY` | Embeddings | — | Required when `EMBEDDING_PROVIDER=openai` |
-| `GEMINI_API_KEY` | Future phases | — | Google Gemini API key placeholder |
+| `RETRIEVAL_TOP_K` | Retrieval / RAG | `5` | Number of chunks retrieved for `/retrieve` and `/chat` |
+| `LLM_PROVIDER` | RAG | `groq` | LLM backend (`groq` or `openai` for production; `test` for pytest) |
+| `GROQ_MODEL` | RAG | `llama-3.3-70b-versatile` | Groq model for answer generation |
+| `OPENAI_LLM_MODEL` | RAG | `gpt-4o-mini` | OpenAI chat model (used when `LLM_PROVIDER=openai`) |
+| `OPENAI_API_KEY` | Embeddings / LLM | — | Required when using OpenAI providers |
+| `GROQ_API_KEY` | RAG | — | Required when `LLM_PROVIDER=groq` |
 
 Example for a non-default API host or port:
 
@@ -479,7 +482,7 @@ Query embedded → similarity search → top-k chunks returned
 | Provider | Status | Integration path |
 |----------|--------|------------------|
 | `openai` | Supported | `OpenAIEmbeddings` via `langchain-openai` |
-| `gemini` | Future | `GoogleGenerativeAIEmbeddings` from `langchain-google-genai` |
+| `gemini` | Future | `GoogleGenerativeAIEmbeddings` from `langchain-google-genai` (not installed) |
 | `ollama` | Future | `OllamaEmbeddings` from `langchain-ollama` |
 | `huggingface` | Future | `HuggingFaceEmbeddings` from `langchain-huggingface` |
 
@@ -531,7 +534,140 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Tests use `EMBEDDING_PROVIDER=test` with isolated temporary SQLite and ChromaDB directories. Coverage includes successful retrieval, multi-document ranking, empty-index retrieval, and Chroma persistence across client restarts.
+Tests use `EMBEDDING_PROVIDER=test` and `LLM_PROVIDER=test` with isolated temporary SQLite and ChromaDB directories. Coverage includes retrieval, RAG chat, citations, empty-context handling, and provider abstraction.
+
+## RAG Answer Generation (Phase 6)
+
+Phase 6 completes the RAG loop by **generating grounded answers** from retrieved document chunks. ResearchPilot still does not implement conversation memory, agents, or streaming.
+
+### What Is RAG?
+
+**Retrieval-Augmented Generation (RAG)** combines two steps:
+
+1. **Retrieval** — find relevant evidence in your document index
+2. **Generation** — an LLM synthesizes an answer using only that evidence
+
+This grounds responses in uploaded documents rather than the model's parametric memory alone.
+
+### Retrieval vs Generation
+
+| Layer | Responsibility | Component |
+|-------|----------------|-----------|
+| **Retrieval** | Find top-k similar chunks | `retrieval_service.py` (unchanged) |
+| **Prompt** | Constrain the LLM to context | `prompt_builder.py` |
+| **Generation** | Produce natural-language answer | `llm_service.py` |
+| **Orchestration** | Wire the pipeline + citations | `rag_service.py` |
+
+The router (`POST /chat`) delegates entirely to `rag_service.py` — no business logic in the HTTP layer.
+
+### Prompt Grounding Strategy
+
+`prompt_builder.py` constructs a template that:
+
+- Identifies the assistant role
+- Instructs **answer only from context**
+- Provides an explicit refusal phrase when context is insufficient
+- Labels each chunk with `filename` and `page_number`
+
+```
+You are a research assistant.
+Answer ONLY using the provided context.
+...
+Context:
+[1] (attention.pdf, page 7):
+Positional encoding injects order information...
+Question: What is positional encoding?
+Answer:
+```
+
+### Hallucination Prevention
+
+When retrieval returns **no meaningful context**, the RAG service:
+
+- **Skips the LLM call entirely**
+- Returns: `"I could not find sufficient information in the uploaded documents."`
+- Returns `"sources": []`
+
+This avoids prompting an LLM without evidence — a common source of hallucination.
+
+### Citation Workflow
+
+After generation, `build_citations()` deduplicates sources by `(filename, page_number)` using metadata already stored during ingestion and indexing:
+
+```json
+{
+  "answer": "Positional encoding injects order information...",
+  "sources": [
+    { "filename": "attention.pdf", "page_number": 7 }
+  ]
+}
+```
+
+### LLM Provider Abstraction
+
+`llm_service.py` exposes a provider factory (`get_llm_service`) returning an `LLMService` with a single `generate(prompt)` method:
+
+| Provider | Status | Integration path |
+|----------|--------|------------------|
+| `groq` | Supported (default) | `ChatGroq` via `langchain-groq` |
+| `openai` | Supported | `ChatOpenAI` via `langchain-openai` |
+| `ollama` | Future | `ChatOllama` from `langchain-ollama` |
+| `test` | Tests only | Deterministic stub (no API calls) |
+
+Swapping providers requires setting `LLM_PROVIDER` in `.env` — RAG and retrieval code remain unchanged.
+
+### End-to-End Workflow
+
+```
+Upload PDF → chunk → embed → ChromaDB
+    ↓
+POST /chat { "question": "..." }
+    ↓
+retrieve_chunks() — reuse Phase 5 retrieval
+    ↓
+build_rag_prompt() — grounded prompt
+    ↓
+generate_answer() — LLM provider
+    ↓
+build_citations() — deduplicated sources
+    ↓
+{ "answer": "...", "sources": [...] }
+```
+
+### Example API Request
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d "{\"question\": \"What is positional encoding?\"}"
+```
+
+Expected response:
+
+```json
+{
+  "answer": "Positional encoding injects order information into transformer inputs.",
+  "sources": [
+    { "filename": "attention.pdf", "page_number": 1 }
+  ]
+}
+```
+
+### Verify with Swagger UI (Phase 6)
+
+1. Set `OPENAI_API_KEY` and `LLM_PROVIDER=openai` (tests use `LLM_PROVIDER=test`)
+2. Start FastAPI: `uvicorn app.main:app --reload`
+3. Upload a PDF via `POST /documents/upload`
+4. Expand `POST /chat` → **Try it out** → `{"question": "What is positional encoding?"}` → **Execute**
+5. Confirm `answer` and `sources` with filename and page numbers
+6. Call `/chat` before uploading any documents → confirm empty-context fallback
+
+### Run Automated Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
 ## Project Structure
 
@@ -544,7 +680,8 @@ researchpilot/
 │   │   ├── hello.py
 │   │   ├── documents.py
 │   │   ├── conversations.py
-│   │   └── retrieve.py
+│   │   ├── retrieve.py
+│   │   └── chat.py
 │   ├── agents/
 │   ├── core/
 │   │   └── config.py
@@ -552,7 +689,10 @@ researchpilot/
 │   │   ├── ingestion.py
 │   │   ├── embedding_service.py
 │   │   ├── chroma_service.py
-│   │   └── retrieval_service.py
+│   │   ├── retrieval_service.py
+│   │   ├── prompt_builder.py
+│   │   ├── llm_service.py
+│   │   └── rag_service.py
 │   ├── models/
 │   │   ├── document.py
 │   │   ├── chunk.py
@@ -561,7 +701,8 @@ researchpilot/
 │   │   ├── document.py
 │   │   ├── chunk.py
 │   │   ├── conversation.py
-│   │   └── retrieve.py
+│   │   ├── retrieve.py
+│   │   └── chat.py
 │   ├── database/
 │   │   ├── base.py
 │   │   └── session.py
@@ -575,7 +716,8 @@ researchpilot/
 ├── tests/
 │   ├── conftest.py
 │   ├── helpers.py
-│   └── test_retrieval.py
+│   ├── test_retrieval.py
+│   └── test_chat.py
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── README.md

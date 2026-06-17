@@ -9,6 +9,7 @@ def seed_document_with_chunks(
     session_factory: sessionmaker,
     filename: str,
     chunk_texts: list[str],
+    page_numbers: list[int] | None = None,
 ) -> Document:
     db: Session = session_factory()
     try:
@@ -18,10 +19,13 @@ def seed_document_with_chunks(
 
         chunk_rows: list[Chunk] = []
         for order, text in enumerate(chunk_texts):
+            page_number = (
+                page_numbers[order] if page_numbers is not None else order + 1
+            )
             chunk = Chunk(
                 document_id=document.id,
                 chunk_text=text,
-                page_number=order + 1,
+                page_number=page_number,
                 chunk_order=order,
             )
             db.add(chunk)

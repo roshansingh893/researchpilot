@@ -25,3 +25,8 @@ HF_EMBEDDING_MODEL = os.getenv(
 
 CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "researchpilot_chunks")
 RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
+
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
