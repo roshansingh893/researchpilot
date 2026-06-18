@@ -31,9 +31,10 @@ def client(tmp_path, monkeypatch):
         autocommit=False, autoflush=False, bind=engine
     )
 
+    import app.models.chat_session  # noqa: F401
     import app.models.chunk  # noqa: F401
-    import app.models.conversation  # noqa: F401
     import app.models.document  # noqa: F401
+    import app.models.message  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 

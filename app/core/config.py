@@ -30,3 +30,5 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
 OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+MEMORY_WINDOW = int(os.getenv("MEMORY_WINDOW", "5"))

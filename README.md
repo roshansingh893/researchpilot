@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 6** — `POST /chat` performs retrieval-augmented generation: relevant chunks are retrieved, grounded prompts are built, and an LLM produces cited answers. Conversation memory, agents, and streaming are not implemented yet.
+This repository is currently in **Phase 7** — ResearchPilot is a conversational AI assistant with session-aware memory. `POST /chat` performs retrieval-augmented generation with conversational context: recent session history is injected into prompts so the LLM can resolve pronoun references across turns. Agents and streaming are not implemented yet.
 
 ## Proposed Architecture
 
@@ -119,6 +119,7 @@ Set environment variables in your shell before starting the apps (or use a tool 
 | `OPENAI_LLM_MODEL` | RAG | `gpt-4o-mini` | OpenAI chat model (used when `LLM_PROVIDER=openai`) |
 | `OPENAI_API_KEY` | Embeddings / LLM | — | Required when using OpenAI providers |
 | `GROQ_API_KEY` | RAG | — | Required when `LLM_PROVIDER=groq` |
+| `MEMORY_WINDOW` | Conversation memory | `5` | Number of recent user-assistant exchanges included in the prompt |
 
 Example for a non-default API host or port:
 
@@ -239,7 +240,7 @@ ResearchPilot uses **SQLAlchemy** with **SQLite** for development persistence. M
 | Engine config | `app/database/session.py` |
 | ORM models | `app/models/` |
 | API schemas | `app/schemas/` |
-| HTTP routes | `app/routers/documents.py`, `app/routers/conversations.py` |
+| HTTP routes | `app/routers/documents.py`, `app/routers/sessions.py` |
 
 Tables are created automatically when FastAPI starts (`init_db()` runs on application startup). The SQLite file is git-ignored; only the `data/` directory structure is tracked.
 
@@ -256,9 +257,11 @@ Useful commands inside the SQLite prompt:
 ```sql
 .tables
 .schema documents
-.schema conversations
+.schema chat_sessions
+.schema messages
 SELECT * FROM documents;
-SELECT * FROM conversations;
+SELECT * FROM chat_sessions;
+SELECT * FROM messages;
 .quit
 ```
 
@@ -280,18 +283,16 @@ curl -X POST http://127.0.0.1:8000/documents \
 curl http://127.0.0.1:8000/documents
 ```
 
-**Create a conversation record:**
+**Create a chat session:**
 
 ```bash
-curl -X POST http://127.0.0.1:8000/conversations \
-  -H "Content-Type: application/json" \
-  -d "{\"query\": \"What is RAG?\", \"response\": \"RAG combines retrieval with generation.\"}"
+curl -X POST http://127.0.0.1:8000/sessions
 ```
 
-**List conversations:**
+**List sessions:**
 
 ```bash
-curl http://127.0.0.1:8000/conversations
+curl http://127.0.0.1:8000/sessions
 ```
 
 ### Verify with Swagger UI
@@ -300,10 +301,10 @@ curl http://127.0.0.1:8000/conversations
 2. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 3. Under **Documents**, expand `POST /documents` → **Try it out** → set body to `{"filename": "paper.pdf"}` → **Execute** → confirm `201` and a JSON response with `id`, `filename`, and `uploaded_at`
 4. Expand `GET /documents` → **Execute** → confirm the created document appears in the list
-5. Under **Conversations**, expand `POST /conversations` → **Try it out** → set body to `{"query": "What is RAG?", "response": "RAG combines retrieval with generation."}` → **Execute** → confirm `201`
-6. Expand `GET /conversations` → **Execute** → confirm the conversation appears
-7. Restart the API and repeat `GET /documents` and `GET /conversations` to confirm data persists across restarts
-8. Optionally run `sqlite3 data/researchpilot.db "SELECT * FROM documents;"` to inspect rows directly
+5. Under **Sessions**, expand `POST /sessions` → **Execute** → confirm `201` with `session_id` and `title`
+6. Expand `GET /sessions` → **Execute** → confirm the session appears
+7. Restart the API and repeat `GET /documents` and `GET /sessions` to confirm data persists across restarts
+8. Optionally run `sqlite3 data/researchpilot.db "SELECT * FROM chat_sessions;"` to inspect rows directly
 
 ## Document Ingestion (Phase 4)
 
@@ -639,7 +640,7 @@ build_citations() — deduplicated sources
 ```bash
 curl -X POST http://127.0.0.1:8000/chat \
   -H "Content-Type: application/json" \
-  -d "{\"question\": \"What is positional encoding?\"}"
+  -d "{\"session_id\": 1, \"question\": \"What is positional encoding?\"}"
 ```
 
 Expected response:
@@ -658,9 +659,10 @@ Expected response:
 1. Set `OPENAI_API_KEY` and `LLM_PROVIDER=openai` (tests use `LLM_PROVIDER=test`)
 2. Start FastAPI: `uvicorn app.main:app --reload`
 3. Upload a PDF via `POST /documents/upload`
-4. Expand `POST /chat` → **Try it out** → `{"question": "What is positional encoding?"}` → **Execute**
-5. Confirm `answer` and `sources` with filename and page numbers
-6. Call `/chat` before uploading any documents → confirm empty-context fallback
+4. Create a session via `POST /sessions` and note the `session_id`
+5. Expand `POST /chat` → **Try it out** → `{"session_id": 1, "question": "What is positional encoding?"}` → **Execute**
+6. Confirm `answer` and `sources` with filename and page numbers
+7. Call `/chat` before uploading any documents → confirm empty-context fallback
 
 ### Run Automated Tests
 
@@ -668,6 +670,106 @@ Expected response:
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## Conversational Memory (Phase 7)
+
+Phase 7 transforms ResearchPilot from a stateless RAG system into a **conversational AI assistant** with session-aware memory.
+
+### Why Conversational Memory Matters
+
+Without memory, each question is independent — the assistant cannot resolve references like "it", "they", or "that technique". Real research conversations are inherently multi-turn: users build on previous answers, ask follow-ups, and use pronouns to reference earlier topics.
+
+### Retrieval Memory vs Conversation Memory
+
+| Type | Purpose | Store |
+|------|---------|-------|
+| **Retrieval memory** | Find relevant document chunks for a query | ChromaDB (vector search) |
+| **Conversation memory** | Track what was discussed in this session | SQLite (`messages` table) |
+
+Both are used together: conversation history provides context for pronoun resolution, while retrieval provides evidence for grounded answers.
+
+### Memory Window Strategy
+
+Sending the entire conversation history to the LLM would quickly exceed token limits and increase latency. ResearchPilot uses a **sliding window** of the last N user-assistant exchanges (configurable via `MEMORY_WINDOW`, default 5).
+
+```
+Window = 5 → last 5 pairs (10 messages) included in prompt
+Older messages are persisted but not sent to the LLM
+```
+
+This balances context quality with token budget — recent exchanges are the most relevant for resolving references.
+
+### Session Management Architecture
+
+```
+POST /sessions          → Create a new chat session
+GET  /sessions          → List all sessions
+GET  /sessions/{id}/messages → Get all messages in a session
+DELETE /sessions/{id}   → Delete session + cascade messages
+POST /chat              → Conversational RAG (requires session_id)
+```
+
+### Database Relationships
+
+```
+ChatSession (chat_sessions)
+├── id, title, created_at, updated_at
+└── messages: [Message, ...] (one-to-many, cascade delete)
+
+Message (messages)
+├── id, session_id (FK), role, content, created_at
+└── session: ChatSession (back-reference)
+```
+
+### Conversational RAG Pipeline
+
+```
+User Question
+    ↓
+Retrieve Relevant Chunks (ChromaDB)
+    ↓
+Fetch Recent History (last N exchanges)
+    ↓
+Build Conversational Prompt
+    (history + context + question)
+    ↓
+LLM Generation
+    ↓
+Persist User Message + Assistant Message
+    ↓
+Return Answer with Citations
+```
+
+### Example Multi-Turn Conversation
+
+```
+# Create a session
+POST /sessions → { "session_id": 1, "title": "New Chat" }
+
+# Turn 1
+POST /chat { "session_id": 1, "question": "What is self-attention?" }
+→ "Self-attention computes weighted relationships between tokens..."
+
+# Turn 2 — pronoun reference resolved via session history
+POST /chat { "session_id": 1, "question": "What are its limitations?" }
+→ "The limitations of self-attention include quadratic complexity..."
+    ↑ "its" resolved to "self-attention" from conversation history
+
+# Turn 3
+POST /chat { "session_id": 1, "question": "How do transformers address this?" }
+→ Uses history of both previous turns for context
+```
+
+### Verify with Swagger UI (Phase 7)
+
+1. Start FastAPI: `uvicorn app.main:app --reload`
+2. `POST /sessions` → note the `session_id`
+3. `POST /chat` with `{"session_id": 1, "question": "What is self-attention?"}` → confirm answer
+4. `POST /chat` with `{"session_id": 1, "question": "What are its limitations?"}` → confirm the answer references self-attention (pronoun resolved)
+5. `GET /sessions/1/messages` → confirm 4 messages (2 user + 2 assistant)
+6. Create a second session and chat in it → verify session 1 messages are unaffected
+7. `DELETE /sessions/1` → verify cascade deletion
+8. Restart the server → verify `GET /sessions` still returns session 2 (persistence)
 
 ## Project Structure
 
@@ -679,7 +781,7 @@ researchpilot/
 │   ├── routers/
 │   │   ├── hello.py
 │   │   ├── documents.py
-│   │   ├── conversations.py
+│   │   ├── sessions.py
 │   │   ├── retrieve.py
 │   │   └── chat.py
 │   ├── agents/
@@ -692,15 +794,17 @@ researchpilot/
 │   │   ├── retrieval_service.py
 │   │   ├── prompt_builder.py
 │   │   ├── llm_service.py
-│   │   └── rag_service.py
+│   │   ├── rag_service.py
+│   │   └── memory_service.py
 │   ├── models/
 │   │   ├── document.py
 │   │   ├── chunk.py
-│   │   └── conversation.py
+│   │   ├── chat_session.py
+│   │   └── message.py
 │   ├── schemas/
 │   │   ├── document.py
 │   │   ├── chunk.py
-│   │   ├── conversation.py
+│   │   ├── session.py
 │   │   ├── retrieve.py
 │   │   └── chat.py
 │   ├── database/
@@ -717,7 +821,8 @@ researchpilot/
 │   ├── conftest.py
 │   ├── helpers.py
 │   ├── test_retrieval.py
-│   └── test_chat.py
+│   ├── test_chat.py
+│   └── test_sessions.py
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── README.md

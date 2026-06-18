@@ -8,8 +8,16 @@ from app.schemas.retrieve import RetrieveResult
 from tests.helpers import seed_document_with_chunks
 
 
+def _create_session(test_client) -> int:
+    """Helper to create a session and return its id."""
+    resp = test_client.post("/sessions")
+    assert resp.status_code == 201
+    return resp.json()["session_id"]
+
+
 def test_successful_grounded_answer_generation(client):
     test_client, session_factory, _chroma_dir = client
+    session_id = _create_session(test_client)
     seed_document_with_chunks(
         session_factory,
         "attention.pdf",
@@ -20,7 +28,7 @@ def test_successful_grounded_answer_generation(client):
 
     response = test_client.post(
         "/chat",
-        json={"question": "What is positional encoding?"},
+        json={"session_id": session_id, "question": "What is positional encoding?"},
     )
 
     assert response.status_code == 200
@@ -32,6 +40,7 @@ def test_successful_grounded_answer_generation(client):
 
 def test_citation_generation_and_deduplication(client):
     test_client, session_factory, _chroma_dir = client
+    session_id = _create_session(test_client)
     seed_document_with_chunks(
         session_factory,
         "attention.pdf",
@@ -44,7 +53,7 @@ def test_citation_generation_and_deduplication(client):
 
     response = test_client.post(
         "/chat",
-        json={"question": "Explain positional encoding."},
+        json={"session_id": session_id, "question": "Explain positional encoding."},
     )
 
     assert response.status_code == 200
@@ -80,10 +89,11 @@ def test_citation_multiple_pages(client):
 
 def test_empty_retrieval_handling(client):
     test_client, _session_factory, _chroma_dir = client
+    session_id = _create_session(test_client)
 
     response = test_client.post(
         "/chat",
-        json={"question": "What is positional encoding?"},
+        json={"session_id": session_id, "question": "What is positional encoding?"},
     )
 
     assert response.status_code == 200
@@ -94,6 +104,7 @@ def test_empty_retrieval_handling(client):
 
 def test_multiple_document_retrieval(client):
     test_client, session_factory, _chroma_dir = client
+    session_id = _create_session(test_client)
     seed_document_with_chunks(
         session_factory,
         "attention.pdf",
@@ -107,7 +118,7 @@ def test_multiple_document_retrieval(client):
 
     response = test_client.post(
         "/chat",
-        json={"question": "What is positional encoding?"},
+        json={"session_id": session_id, "question": "What is positional encoding?"},
     )
 
     assert response.status_code == 200

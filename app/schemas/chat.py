@@ -7,6 +7,7 @@ class SourceReference(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    session_id: int
     question: str = Field(..., min_length=1)
 
 

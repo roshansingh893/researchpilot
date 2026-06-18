@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database.session import init_db
-from app.routers import chat, conversations, documents, hello, retrieve
+from app.routers import chat, documents, hello, retrieve, sessions
 from app.services.embedding_service import get_embedding_model
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ app = FastAPI(title="ResearchPilot", lifespan=lifespan)
 
 app.include_router(hello.router)
 app.include_router(documents.router)
-app.include_router(conversations.router)
+app.include_router(sessions.router)
 app.include_router(retrieve.router)
 app.include_router(chat.router)
 
@@ -33,3 +33,4 @@ app.include_router(chat.router)
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "project": "ResearchPilot"}
+

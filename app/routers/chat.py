@@ -10,4 +10,5 @@ router = APIRouter(tags=["Chat"])
 
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
-    return generate_chat_response(db, payload.question)
+    return generate_chat_response(db, payload.question, payload.session_id)
+

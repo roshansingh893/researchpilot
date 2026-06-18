@@ -63,10 +63,24 @@ class TestLLMService(LLMService):
 
     Returns grounded-style answers when known context phrases appear in the
     prompt; otherwise returns a generic context-based acknowledgement.
+    Supports conversational prompts with history for multi-turn testing.
     """
 
     def generate(self, prompt: str) -> str:
         prompt_lower = prompt.lower()
+
+        # Multi-turn: detect follow-up about limitations when history
+        # mentions self-attention
+        if (
+            "conversation history:" in prompt_lower
+            and "self-attention" in prompt_lower
+            and "limitation" in prompt_lower
+        ):
+            return (
+                "The limitations of self-attention include quadratic "
+                "computational complexity with sequence length."
+            )
+
         if (
             "positional encoding injects order" in prompt_lower
             or "positional encoding is essential" in prompt_lower
