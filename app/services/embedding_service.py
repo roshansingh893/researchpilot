@@ -29,7 +29,7 @@ construction. monkeypatch EMBEDDING_PROVIDER=test before calling the factory
 to avoid loading any real model during unit tests.
 """
 
-import logging
+from app.core.logging import get_logger
 import os
 from functools import lru_cache
 
@@ -37,7 +37,7 @@ from langchain_core.embeddings import Embeddings
 
 from app.core.config import HF_EMBEDDING_MODEL, OPENAI_API_KEY, OPENAI_EMBEDDING_MODEL
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

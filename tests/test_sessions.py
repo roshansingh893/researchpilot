@@ -1,6 +1,5 @@
 """Tests for session management, message persistence, and conversational memory."""
 
-import pytest
 
 from tests.helpers import seed_document_with_chunks
 
@@ -202,7 +201,6 @@ def test_memory_window_truncation(client, monkeypatch):
 
     # But the memory window should only include the last 1 exchange (2 messages)
     from app.database.session import SessionLocal
-    from app.services.memory_service import get_recent_history
 
     db = SessionLocal()
     try:

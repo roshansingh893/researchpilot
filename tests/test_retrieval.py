@@ -1,4 +1,3 @@
-from app.core import config
 from app.services.chroma_service import (
     _resolve_collection_name,
     get_chroma_client,

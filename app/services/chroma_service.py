@@ -18,7 +18,7 @@ Old collections remain on disk for safety; they can be deleted manually once
 you are confident they are no longer needed.
 """
 
-import logging
+from app.core.logging import get_logger
 from typing import Optional
 
 import chromadb
@@ -27,7 +27,7 @@ from app.core import config
 from app.models.chunk import Chunk
 from app.services.embedding_service import get_embedding_dimension, get_embedding_model
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _client: Optional[chromadb.PersistentClient] = None
 _collection: Optional[chromadb.Collection] = None

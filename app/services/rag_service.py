@@ -5,7 +5,7 @@ Coordinates retrieval, prompt construction, LLM generation, citation
 assembly, and message persistence for session-aware conversations.
 """
 
-import logging
+from app.core.logging import get_logger
 
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,7 @@ from app.services.memory_service import (
 from app.services.prompt_builder import build_conversational_rag_prompt
 from app.services.retrieval_service import retrieve_chunks
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 NO_CONTEXT_ANSWER = (
     "I could not find sufficient information in the uploaded documents."

@@ -32,7 +32,5 @@ def get_messages(
 
 
 @router.delete("/{session_id}", status_code=204)
-def delete_existing_session(
-    session_id: int, db: Session = Depends(get_db)
-) -> None:
+def delete_existing_session(session_id: int, db: Session = Depends(get_db)) -> None:
     delete_session(db, session_id)

@@ -8,8 +8,7 @@ Provides the high-level ``run_research()`` entry point that:
 4. Returns a structured ResearchResponse
 """
 
-import logging
-
+from app.core.logging import get_logger
 from app.schemas.research import (
     ResearchResponse,
     ResearchSourceReference,
@@ -17,7 +16,7 @@ from app.schemas.research import (
 from app.services.research_graph import build_research_graph
 from app.services.research_state import ResearchState
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def run_research(query: str) -> ResearchResponse:

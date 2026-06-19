@@ -1,4 +1,3 @@
-import pytest
 
 from app.services.llm_service import TestLLMService, get_llm_service
 from app.services.prompt_builder import build_rag_prompt

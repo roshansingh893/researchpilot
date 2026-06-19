@@ -12,7 +12,6 @@ Tests cover:
   - Existing /chat regression
 """
 
-import json
 
 from app.services.research_graph import (
     INSUFFICIENT_CONTEXT_MESSAGE,

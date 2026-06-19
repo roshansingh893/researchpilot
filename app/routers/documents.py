@@ -4,17 +4,20 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.core.errors import DocumentNotFoundError
 from app.schemas.chunk import ChunkResponse
-from app.schemas.document import DocumentCreate, DocumentResponse, DocumentUploadResponse
+from app.schemas.document import (
+    DocumentCreate,
+    DocumentResponse,
+    DocumentUploadResponse,
+)
 from app.services.ingestion import ingest_pdf
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
 @router.post("", response_model=DocumentResponse, status_code=201)
-def create_document(
-    payload: DocumentCreate, db: Session = Depends(get_db)
-) -> Document:
+def create_document(payload: DocumentCreate, db: Session = Depends(get_db)) -> Document:
     document = Document(filename=payload.filename)
     db.add(document)
     db.commit()
@@ -50,7 +53,7 @@ def list_document_chunks(
 ) -> list[ChunkResponse]:
     document = db.get(Document, document_id)
     if document is None:
-        raise HTTPException(status_code=404, detail="Document not found.")
+        raise DocumentNotFoundError(f"Document with ID {document_id} not found.")
 
     return (
         db.query(Chunk)

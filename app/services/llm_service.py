@@ -13,7 +13,7 @@ Future providers (add a branch in get_llm_service):
 - ollama:  ChatOllama from langchain-ollama (local models)
 """
 
-import logging
+from app.core.logging import get_logger
 import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
@@ -26,7 +26,7 @@ from app.core.config import (
     OPENAI_LLM_MODEL,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LLMService(ABC):

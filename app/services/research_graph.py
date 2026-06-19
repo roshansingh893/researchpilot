@@ -21,7 +21,7 @@ the report_writer with whatever partial data is available.
 """
 
 import json
-import logging
+from app.core.logging import get_logger
 
 from langgraph.graph import END, StateGraph
 
@@ -35,7 +35,7 @@ INSUFFICIENT_CONTEXT_MESSAGE = (
     "Insufficient relevant information found in uploaded documents."
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

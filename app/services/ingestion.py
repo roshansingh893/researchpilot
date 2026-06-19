@@ -17,9 +17,12 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 
 from app.core.config import CHUNK_OVERLAP, CHUNK_SIZE, UPLOAD_DIR
+from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.services.chroma_service import index_chunks
+
+logger = get_logger(__name__)
 
 
 def _safe_filename(filename: str) -> str:
@@ -105,6 +108,7 @@ def ingest_pdf(db: Session, file: UploadFile) -> tuple[Document, int]:
     Chunk text lives in SQLite; vectors live in ChromaDB keyed by chunk id.
     LLM answer generation is intentionally deferred to Phase 6.
     """
+    logger.info("Document upload started for file: %s", file.filename)
     filename = _safe_filename(file.filename or "upload.pdf")
     document = Document(filename=filename)
     db.add(document)
@@ -115,9 +119,12 @@ def ingest_pdf(db: Session, file: UploadFile) -> tuple[Document, int]:
     text_chunks = split_documents(page_documents)
     chunk_rows = persist_chunks(db, document.id, text_chunks)
     db.flush()
+    
+    logger.info("Chunks generated: %d chunks for document %s", len(chunk_rows), filename)
 
     index_chunks(chunk_rows, source_filename=filename)
 
     db.commit()
     db.refresh(document)
+    logger.info("Document uploaded successfully: %s (ID: %d)", filename, document.id)
     return document, len(chunk_rows)
