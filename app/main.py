@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database.session import init_db
-from app.routers import chat, documents, hello, retrieve, sessions
+from app.routers import chat, documents, hello, research, retrieve, sessions
 from app.services.embedding_service import get_embedding_model
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ app.include_router(documents.router)
 app.include_router(sessions.router)
 app.include_router(retrieve.router)
 app.include_router(chat.router)
+app.include_router(research.router)
 
 
 @app.get("/health")

@@ -98,6 +98,51 @@ class TestLLMService(LLMService):
             return (
                 "Self-attention computes weighted relationships between tokens."
             )
+
+        # ── Phase 8: Research pipeline stubs ──────────────────────────
+
+        # Planner: decompose a research question into sub-tasks
+        if "research planner" in prompt_lower and "sub-tasks" in prompt_lower:
+            return (
+                '["What is CNN?", "What is RNN?", "What is Transformer?", '
+                '"Strengths and weaknesses comparison"]'
+            )
+
+        # Analyzer: transform evidence into structured findings
+        if "research analyst" in prompt_lower and "structured findings" in prompt_lower:
+            return (
+                "- CNNs excel at spatial feature extraction using convolutional filters\n"
+                "- RNNs process sequential data through recurrent connections\n"
+                "- Transformers use self-attention for parallel sequence processing\n"
+                "- Transformers have largely replaced RNNs for NLP tasks"
+            )
+
+        # Report writer: generate a structured research report
+        if "research report writer" in prompt_lower and "executive summary" in prompt_lower:
+            return (
+                "Executive Summary\n"
+                "This report compares CNN, RNN, and Transformer architectures.\n\n"
+                "Detailed Findings\n"
+                "CNNs excel at spatial feature extraction. "
+                "RNNs process sequential data. "
+                "Transformers use self-attention for parallel processing.\n\n"
+                "Comparison\n"
+                "Transformers outperform RNNs for most NLP tasks due to "
+                "parallelization and long-range dependency handling.\n\n"
+                "Conclusion\n"
+                "Transformers are the current state-of-the-art for NLP.\n\n"
+                "Recommendations\n"
+                "Use Transformers for NLP tasks; consider CNNs for vision tasks."
+            )
+
+        # Partial report writer: when evidence is insufficient
+        if "research report writer" in prompt_lower and "partial" in prompt_lower:
+            return (
+                "Partial Research Report\n"
+                "Insufficient evidence was found to fully answer the question. "
+                "The research process was unable to retrieve relevant documents."
+            )
+
         return "Answer synthesized from the provided document context."
 
 

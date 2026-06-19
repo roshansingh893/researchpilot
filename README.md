@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 7** — ResearchPilot is a conversational AI assistant with session-aware memory. `POST /chat` performs retrieval-augmented generation with conversational context: recent session history is injected into prompts so the LLM can resolve pronoun references across turns. Agents and streaming are not implemented yet.
+This repository is currently in **Phase 8** — ResearchPilot is an agentic research assistant powered by LangGraph. `POST /chat` provides conversational RAG with session memory, and the new `POST /research` endpoint runs a multi-step agentic workflow: planning → retrieval → analysis → report writing, with conditional routing and retry loops. Streaming is not implemented yet.
 
 ## Proposed Architecture
 
@@ -120,6 +120,7 @@ Set environment variables in your shell before starting the apps (or use a tool 
 | `OPENAI_API_KEY` | Embeddings / LLM | — | Required when using OpenAI providers |
 | `GROQ_API_KEY` | RAG | — | Required when `LLM_PROVIDER=groq` |
 | `MEMORY_WINDOW` | Conversation memory | `5` | Number of recent user-assistant exchanges included in the prompt |
+| `RESEARCH_RELEVANCE_THRESHOLD` | Research agent | `0.25` | Minimum average similarity score for retrieved chunks to proceed to analysis (lower = more permissive) |
 
 Example for a non-default API host or port:
 
@@ -771,6 +772,161 @@ POST /chat { "session_id": 1, "question": "How do transformers address this?" }
 7. `DELETE /sessions/1` → verify cascade deletion
 8. Restart the server → verify `GET /sessions` still returns session 2 (persistence)
 
+## Agentic Research Assistant (Phase 8)
+
+Phase 8 transforms ResearchPilot from a linear RAG pipeline into an **agentic research assistant** using **LangGraph** for state management, conditional routing, and retry logic.
+
+### What Is an Agent?
+
+An **AI agent** is a system that uses an LLM to reason about tasks, make decisions, and execute multi-step workflows autonomously. Unlike a simple chatbot that takes a question and produces an answer in a single step, an agent:
+
+- **Plans** what steps are needed
+- **Executes** each step, observing results
+- **Decides** what to do next based on outcomes
+- **Adapts** when things go wrong (e.g., retries)
+
+### RAG vs Agentic RAG
+
+| Aspect | Traditional RAG | Agentic RAG |
+|--------|----------------|-------------|
+| **Flow** | Linear: retrieve → generate | Multi-step: plan → retrieve → analyze → write |
+| **Decision-making** | None — always follows same path | Conditional routing based on results |
+| **Error handling** | Fails or returns empty | Retries with backoff, falls back gracefully |
+| **Query handling** | Takes query as-is | Decomposes complex queries into sub-tasks |
+| **Output** | Single answer string | Structured report with findings |
+| **State** | Stateless per request | Managed state throughout pipeline |
+
+### What Is LangGraph?
+
+**LangGraph** is a library for building stateful, multi-step LLM workflows as directed graphs. Each node is a function that reads and writes to a shared state object. Edges (including conditional edges) determine the execution order.
+
+Key concepts:
+
+- **StateGraph** — defines the graph structure and state schema
+- **Nodes** — functions that process and update state
+- **Edges** — connections between nodes (unconditional or conditional)
+- **Conditional edges** — routing functions that inspect state and choose the next node
+- **Compiled graph** — the executable form, invoked with an initial state
+
+### State Management
+
+`ResearchState` is a `TypedDict` that serves as the **single source of truth** for the entire workflow. Every node reads from and writes to this shared state:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `query` | `str` | Original user question |
+| `plan` | `list[str]` | Sub-tasks from the planner |
+| `current_task` | `str` | Sub-task being processed |
+| `retrieved_chunks` | `list[dict]` | Aggregated retrieval results |
+| `findings` | `list[str]` | Structured findings from analyzer |
+| `report` | `str` | Final research report |
+| `sources` | `list[dict]` | Deduplicated citation metadata |
+| `retry_count` | `int` | Number of retries performed (max 3) |
+| `average_similarity` | `float` | Relevance score of retrieved chunks |
+| `status` | `str` | Current execution phase |
+
+### Conditional Routing
+
+Two conditional edges control the graph flow based on state:
+
+**`check_retrieval`** (after retriever):
+- Chunks found + good relevance → proceed to analyzer
+- Chunks found + low relevance → skip to insufficient context (graceful fallback)
+- Chunks empty + retries remain → retry retrieval
+- Chunks empty + max retries reached → skip to report writer
+
+**`check_findings`** (after analyzer):
+- Findings present → proceed to report writer
+- Findings empty + retries remain → retry retrieval
+- Findings empty + max retries reached → generate partial report
+
+### Retry Loops
+
+When retrieval yields no results, the graph retries up to **3 times** via a dedicated `retry_retrieval` node that increments `retry_count`. This prevents infinite loops while giving the system multiple chances to find evidence.
+
+After exhausting retries, the graph proceeds to the report writer with whatever partial data is available, ensuring the user always gets a response.
+
+### Research Workflow
+
+```
+User Question
+    ↓
+┌─────────┐
+│ Planner │  Break query into sub-tasks
+└────┬────┘
+     ↓
+┌───────────┐
+│ Retriever │  Retrieve evidence per sub-task
+└─────┬─────┘
+      ↓
+┌─────────────────┐
+│ Check Retrieval │  Chunks found & relevant?
+└───┬─────────┬─┬─┘
+    │ yes     │ │ no (retry ≤ 3)
+    │         │ └──→ Retry → Retriever
+    │         │ low relevance
+    │         └──→ Insufficient Context
+    ↓
+┌──────────┐
+│ Analyzer │  Extract structured findings
+└────┬─────┘
+     ↓
+┌────────────────┐
+│ Check Findings │  Findings present?
+└──┬──────────┬──┘
+   │ yes      │ no (retry ≤ 3)
+   ↓          └──→ Retry → Retriever
+┌───────────────┐
+│ Report Writer │  Generate structured report
+└───────┬───────┘
+        ↓
+   Final Report
+```
+
+### New `/research` Endpoint
+
+**Request:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/research \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": \"Compare CNN, RNN and Transformers for NLP.\"}"
+```
+
+**Response:**
+
+```json
+{
+  "summary": "Executive Summary\nThis report compares CNN, RNN, and Transformer architectures...\n\nDetailed Findings\n...\n\nConclusion\n...",
+  "key_findings": [
+    "CNNs excel at spatial feature extraction using convolutional filters",
+    "RNNs process sequential data through recurrent connections",
+    "Transformers use self-attention for parallel sequence processing",
+    "Transformers have largely replaced RNNs for NLP tasks"
+  ],
+  "sources": [
+    { "filename": "architectures.pdf", "page_number": 1 },
+    { "filename": "architectures.pdf", "page_number": 2 }
+  ]
+}
+```
+
+### Verify with Swagger UI (Phase 8)
+
+1. Start FastAPI: `uvicorn app.main:app --reload`
+2. Upload PDFs via `POST /documents/upload`
+3. Expand `POST /research` → **Try it out** → set body to `{"query": "Compare CNN, RNN and Transformers for NLP."}` → **Execute**
+4. Confirm `summary`, `key_findings`, and `sources` in the response
+5. Verify `POST /chat` still works exactly as before
+
+### Run Automated Tests
+
+```bash
+pytest tests/test_research.py -v
+```
+
+Tests cover: planner decomposition, retriever aggregation, conditional routing, retry logic, analyzer, report generation, end-to-end graph execution, API endpoint, partial results, source deduplication, and existing `/chat` regression.
+
 ## Project Structure
 
 ```
@@ -783,7 +939,8 @@ researchpilot/
 │   │   ├── documents.py
 │   │   ├── sessions.py
 │   │   ├── retrieve.py
-│   │   └── chat.py
+│   │   ├── chat.py
+│   │   └── research.py
 │   ├── agents/
 │   ├── core/
 │   │   └── config.py
@@ -795,6 +952,9 @@ researchpilot/
 │   │   ├── prompt_builder.py
 │   │   ├── llm_service.py
 │   │   ├── rag_service.py
+│   │   ├── research_state.py
+│   │   ├── research_graph.py
+│   │   ├── research_agent.py
 │   │   └── memory_service.py
 │   ├── models/
 │   │   ├── document.py
@@ -806,7 +966,8 @@ researchpilot/
 │   │   ├── chunk.py
 │   │   ├── session.py
 │   │   ├── retrieve.py
-│   │   └── chat.py
+│   │   ├── chat.py
+│   │   └── research.py
 │   ├── database/
 │   │   ├── base.py
 │   │   └── session.py
@@ -822,7 +983,9 @@ researchpilot/
 │   ├── helpers.py
 │   ├── test_retrieval.py
 │   ├── test_chat.py
-│   └── test_sessions.py
+│   ├── test_sessions.py
+│   ├── test_investigation.py
+│   └── test_research.py
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── README.md

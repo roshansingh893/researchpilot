@@ -32,3 +32,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 MEMORY_WINDOW = int(os.getenv("MEMORY_WINDOW", "5"))
+
+RESEARCH_RELEVANCE_THRESHOLD = float(
+    os.getenv("RESEARCH_RELEVANCE_THRESHOLD", "0.25")
+)
