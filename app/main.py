@@ -71,8 +71,6 @@ app.include_router(sessions.router)
 app.include_router(retrieve.router)
 app.include_router(chat.router)
 app.include_router(research.router)
-
-
 @app.get("/health")
 def health_check():
     health_status = {
@@ -96,7 +94,7 @@ def health_check():
         
     # Check Chroma
     try:
-        from app.database.chroma import get_chroma_client
+        from app.services.chroma_service import get_chroma_client
         client = get_chroma_client()
         client.heartbeat()
         health_status["chroma"] = "connected"
@@ -114,3 +112,6 @@ def health_check():
         
     return health_status
 
+import gradio as gr
+from gradio_app.app import demo
+app = gr.mount_gradio_app(app, demo, path="/")

@@ -3,6 +3,7 @@ services:
     name: researchpilot
     env: docker
     plan: free
+    healthCheckPath: /health
     disk:
       name: data
       mountPath: /app/data
