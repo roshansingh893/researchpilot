@@ -2,7 +2,7 @@
 
 ResearchPilot is a production-grade generative AI project for research assistance. It combines a FastAPI backend, a Gradio UI, retrieval-augmented generation (RAG), and multi-agent orchestration to help users explore and synthesize information from uploaded documents.
 
-This repository is currently in **Phase 8** — ResearchPilot is an agentic research assistant powered by LangGraph. `POST /chat` provides conversational RAG with session memory, and the new `POST /research` endpoint runs a multi-step agentic workflow: planning → retrieval → analysis → report writing, with conditional routing and retry loops. Streaming is not implemented yet.
+This repository is complete and fully production-ready (**Final Phase**). ResearchPilot is an agentic research assistant powered by LangGraph. `POST /chat` provides conversational RAG with session memory, and the new `POST /research` endpoint runs a multi-step agentic workflow: planning → retrieval → analysis → report writing, with conditional routing and retry loops. It includes a complete Dockerized setup and is ready for one-click deployment on Render.
 
 ## Proposed Architecture
 
@@ -926,6 +926,41 @@ pytest tests/test_research.py -v
 ```
 
 Tests cover: planner decomposition, retriever aggregation, conditional routing, retry logic, analyzer, report generation, end-to-end graph execution, API endpoint, partial results, source deduplication, and existing `/chat` regression.
+
+## Deployment & Production (Final Phase)
+
+The final phase transforms ResearchPilot from a local development project into a production-ready application using Docker and Render.
+
+### Unified Architecture
+
+To comply with free-tier limitations on cloud providers (which often allow only one web service), the **Gradio UI is mounted directly onto the FastAPI backend** (`app/main.py`). This means both the API and the user interface are served from a single container on the same port.
+
+- `GET /` → Serves the Gradio User Interface
+- `GET /health` → Deep health check verifying database and ChromaDB connections
+- `POST /chat`, `POST /research`, etc. → Standard FastAPI routes
+
+### Dockerization
+
+A multi-stage, production-optimized `Dockerfile` is included:
+- **Base image:** `python:3.11-slim` for reduced attack surface and size.
+- **Dependency Caching:** Uses `--mount=type=cache` to speed up builds.
+- **Security:** Runs as a non-root user (`appuser`).
+- **Web Server:** Uses `uvicorn` configured for production.
+
+### Render Deployment
+
+The repository includes a `render.yaml` file for one-click deployment as an Infrastructure-as-Code (IaC) blueprint.
+
+**Key Render configurations:**
+- **Persistent Disk:** A 1GB disk is mounted at `/app/data`. This is critical because Render spins down free-tier instances, and without a disk, all SQLite metadata and ChromaDB vectors would be permanently lost on every restart.
+- **Secure Secrets:** API keys (`OPENAI_API_KEY`, `GROQ_API_KEY`) are marked as `sync: false`, preventing them from being exposed in source control.
+- **Health Checks:** Configured with `healthCheckPath: /health` so the load balancer knows when the app is ready to receive traffic.
+
+**How to deploy:**
+1. Push this repository to GitHub.
+2. Connect your GitHub account to Render.
+3. Choose **Blueprints** and select this repository. Render will automatically parse the `render.yaml` and provision the Web Service and Persistent Disk.
+4. Add your API keys manually in the Render dashboard.
 
 ## Project Structure
 
